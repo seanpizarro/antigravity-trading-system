@@ -1,0 +1,28 @@
+# This is an example configuration file
+# To learn more, see the full config.yaml reference: https://docs.continue.dev/reference
+
+name: Example Config
+version: 1.0.0
+schema: v1
+
+# Define which models can be used
+# https://docs.continue.dev/customization/models
+models:
+  - name: deepseek-r1-8b  
+    provider: ollama
+    model: deepseek-r1:8b
+  - name: qwen3-coder
+    provider: ollama
+    model: qwen3-coder
+    roles:
+      - autocomplete
+context:
+  -provider: code
+  -provider: docs
+  -provider: diff
+  -provider: terminal
+  -provider: problems
+  -provider: folder
+  -provider: codebase
+  
+

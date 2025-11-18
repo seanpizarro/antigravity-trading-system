@@ -1,0 +1,14 @@
+options_trading_system/
+│
+├── 📄 main.py                          # Main orchestrator
+├── 📄 config.py                        # Configuration & credentials
+├── 📄 deepseek_analyst.py              # Multi-task AI integration
+├── 📄 jax_engine.py                    # Accelerated computations
+├── 📄 trade_manager.py                 # Active position management
+├── 📄 opportunity_scanner.py           # Continuous scanning
+├── 📄 risk_monitor.py                  # Real-time risk monitoring
+├── 📄 tastytrade_api.py                # Trading execution
+├── 📄 dashboard.py                     # Reporting & alerts
+├── 📄 personalization.py               # Style learning
+├── 📄 requirements.txt                 # Dependencies
+└── 📄 README.md                        # Setup instructions

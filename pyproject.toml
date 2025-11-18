@@ -1,0 +1,28 @@
+[project]
+name = "antigravity-trading"
+version = "0.1.0"
+description = "Dual-account trading system with DeepSeek AI and JAX analytics"
+requires-python = ">=3.9"
+dependencies = [
+    "streamlit",
+    "pandas",
+    "numpy",
+    "plotly",
+    "jax",
+    "jaxlib",
+    "requests",
+    "python-dotenv",
+    "yfinance",
+    "schedule",
+    "python-dateutil",
+    "typing-extensions",
+    "dataclasses-json",
+    "pytz"
+]
+
+[tool.uv]
+dev-dependencies = [
+    "pytest",
+    "black",
+    "isort"
+]

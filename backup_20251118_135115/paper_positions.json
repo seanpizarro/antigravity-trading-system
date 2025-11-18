@@ -1,0 +1,58 @@
+{
+  "QQQ_595.0_call_1763410721": {
+    "symbol": "QQQ",
+    "strike": 595.0,
+    "option_type": "call",
+    "expiration": "2025-11-17",
+    "strategy": "DEBIT_SPREAD",
+    "quantity": 1,
+    "entry_price": 6.63,
+    "entry_time": "2025-11-17T12:18:41.866790",
+    "order_id": "PAPER_1763410721",
+    "underlying_price": 601.1
+  },
+  "_0__1763425914": {
+    "symbol": "",
+    "strike": 0,
+    "option_type": "",
+    "expiration": "",
+    "strategy": "",
+    "quantity": 1,
+    "entry_price": 0,
+    "entry_time": "2025-11-17T16:31:54.392219",
+    "order_id": "PAPER_1763425914",
+    "underlying_price": 0
+  },
+  "UNKNOWN_1763425914.393429": {
+    "success": true,
+    "order_id": "PAPER_1763425914",
+    "symbol": "",
+    "quantity": 1,
+    "price": 0,
+    "message": "Paper trade executed successfully"
+  },
+  "_0__1763425916": {
+    "symbol": "",
+    "strike": 0,
+    "option_type": "",
+    "expiration": "",
+    "strategy": "",
+    "quantity": 1,
+    "entry_price": 0,
+    "entry_time": "2025-11-17T16:31:56.005173",
+    "order_id": "PAPER_1763425916",
+    "underlying_price": 0
+  },
+  "_0__1763425977": {
+    "symbol": "",
+    "strike": 0,
+    "option_type": "",
+    "expiration": "",
+    "strategy": "",
+    "quantity": 1,
+    "entry_price": 0,
+    "entry_time": "2025-11-17T16:32:57.088653",
+    "order_id": "PAPER_1763425977",
+    "underlying_price": 0
+  }
+}

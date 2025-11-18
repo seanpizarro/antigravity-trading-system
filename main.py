@@ -1,0 +1,465 @@
+# main.py - UPDATED FOR DUAL ACCOUNTS
+#!/usr/bin/env python3
+"""
+MAIN ORCHESTRATOR - Dual Account Trading System
+Supports both live and paper trading simultaneously
+"""
+
+import sys
+import os
+import threading
+import time
+import schedule
+from datetime import datetime, timedelta
+import logging
+import logging.handlers
+from typing import Dict, List, Optional
+
+# Fix Windows console encoding for emojis
+if sys.platform == 'win32':
+    sys.stdout.reconfigure(encoding='utf-8')
+    sys.stderr.reconfigure(encoding='utf-8')
+
+from config import TradingConfig
+from deepseek_analyst import DeepSeekMultiTaskAI
+from jax_engine import JAXRealTimeAnalytics
+from trade_manager import ActiveTradeManager
+from opportunity_scanner import OpportunityScanner
+from risk_monitor import AccountRiskMonitor
+from dual_tastytrade_api import dual_tasty_api  # 🎯 NEW: Dual account API
+from dashboard import RealTimeDashboard
+from personalization import PersonalizedTradingAI
+
+class DualAccountTradingOrchestrator:
+    """
+    Main coordinator that manages both live and paper trading accounts
+    """
+    
+    def __init__(self, config: TradingConfig):
+        self.config = config
+        self.setup_logging()
+        
+        # Initialize core components
+        self.deepseek_ai = DeepSeekMultiTaskAI(config.deepseek_api_key)
+        self.jax_engine = JAXRealTimeAnalytics()
+        
+        # 🎯 DUAL ACCOUNT: Use the dual API instead of single
+        self.tasty_api = dual_tasty_api
+        
+        # Initialize specialized systems for each account type
+        self.trade_managers = {}
+        self.opportunity_scanners = {}
+        self.risk_monitors = {}
+        
+        self._initialize_account_systems()
+        
+        self.dashboard = RealTimeDashboard(self.deepseek_ai)
+        self.personalizer = PersonalizedTradingAI(self.deepseek_ai)
+        
+        # System state
+        self.is_running = False
+        self.open_positions = {}  # Nested: {'paper': {}, 'live': {}}
+        self.opportunity_queue = []
+        self.risk_alerts = []
+        self.current_trading_mode = os.getenv('TRADING_MODE', 'paper')
+        
+    def _initialize_account_systems(self):
+        """Initialize trading systems for each active account"""
+        accounts = self.tasty_api.get_all_accounts()
+        
+        for account_type, account_info in accounts.items():
+            # Create trade manager for this account
+            self.trade_managers[account_type] = ActiveTradeManager(
+                self.deepseek_ai, self.jax_engine, account_info.api_instance
+            )
+            
+            # Create opportunity scanner for this account
+            self.opportunity_scanners[account_type] = OpportunityScanner(
+                self.jax_engine, account_info.api_instance
+            )
+            
+            # Create risk monitor for this account
+            self.risk_monitors[account_type] = AccountRiskMonitor(
+                account_info.api_instance, self.deepseek_ai, self.config.risk_parameters
+            )
+            
+            self.logger.info(f"✅ Initialized systems for {account_info.name}")
+    
+    def setup_logging(self):
+        """Setup comprehensive logging with rotation"""
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            handlers=[
+                logging.handlers.RotatingFileHandler(
+                    'trading_system.log', 
+                    maxBytes=10*1024*1024,  # 10MB
+                    backupCount=5,
+                    encoding='utf-8'
+                ),
+                logging.StreamHandler()
+            ]
+        )
+        self.logger = logging.getLogger(__name__)
+        
+    def start_continuous_operation(self):
+        """Start all systems for both accounts"""
+        self.logger.info("🚀 Starting Dual-Account Trading System")
+        self.is_running = True
+        
+        # Load existing positions for all accounts
+        self.open_positions = self.tasty_api.get_positions()
+        self.logger.info(f"📊 Loaded positions: {self._format_positions_summary()}")
+        
+        # Show system configuration
+        self._print_system_info()
+        
+        # Start background threads
+        threads = [
+            threading.Thread(target=self.trade_management_loop, name="TradeManager"),
+            threading.Thread(target=self.opportunity_scanning_loop, name="OpportunityScanner"),
+            threading.Thread(target=self.risk_monitoring_loop, name="RiskMonitor"),
+            threading.Thread(target=self.personalization_loop, name="Personalizer"),
+            threading.Thread(target=self.account_monitoring_loop, name="AccountMonitor")  # 🎯 NEW
+        ]
+        
+        for thread in threads:
+            thread.daemon = True
+            thread.start()
+            
+        # Main coordination loop
+        self.main_coordination_loop()
+    
+    def _print_system_info(self):
+        """Print dual account system configuration"""
+        accounts = self.tasty_api.get_all_accounts()
+        balances = self.tasty_api.get_account_balances()
+        
+        print("\n" + "="*60)
+        print("🤖 DUAL-ACCOUNT AI TRADING SYSTEM")
+        print("="*60)
+        print(f"🔧 Trading Mode: {self.current_trading_mode.upper()}")
+        
+        for account_type, account_info in accounts.items():
+            balance = balances.get(account_type, 0)
+            print(f"💼 {account_info.name}: ${balance:,.2f}")
+            
+        print(f"⚡ Scanner: Optimized (10-15 seconds)")
+        print(f"🤖 AI Engine: DeepSeek + JAX")
+        print(f"📊 Active Systems: {len(self.trade_managers)} account(s)")
+        print("="*60 + "\n")
+    
+    def _format_positions_summary(self) -> str:
+        """Format positions summary for logging"""
+        summary = []
+        for account_type, positions in self.open_positions.items():
+            summary.append(f"{account_type}: {len(positions)} positions")
+        return ", ".join(summary) if summary else "No positions"
+    
+    def account_monitoring_loop(self):
+        """🎯 NEW: Monitor account balances and status"""
+        self.logger.info("💰 Starting Account Monitoring Loop")
+        
+        while self.is_running:
+            try:
+                # Update account balances every 5 minutes
+                balances = self.tasty_api.get_account_balances()
+                
+                for account_type, balance in balances.items():
+                    self.logger.info(f"💰 {account_type.upper()} Balance: ${balance:,.2f}")
+                
+                time.sleep(300)  # 5 minutes
+                
+            except Exception as e:
+                self.logger.error(f"Error in account monitoring: {e}")
+                time.sleep(60)
+    
+    def trade_management_loop(self):
+        """Continuous trade management for all accounts"""
+        self.logger.info("🔄 Starting Active Trade Management Loop")
+        
+        while self.is_running:
+            try:
+                # Manage positions for each account
+                for account_type, trade_manager in self.trade_managers.items():
+                    account_positions = self.open_positions.get(account_type, {})
+                    
+                    management_actions = trade_manager.manage_all_positions(account_positions)
+                    
+                    # Store actions for main thread execution
+                    for action in management_actions:
+                        action.account_type = account_type  # 🎯 Track which account
+                        self.execute_management_action(action)
+                    
+                time.sleep(300)  # 5 minutes
+                
+            except Exception as e:
+                self.logger.error(f"Error in trade management: {e}")
+                time.sleep(60)
+    
+    def opportunity_scanning_loop(self):
+        """Continuous opportunity scanning for all accounts"""
+        self.logger.info("🔍 Starting Continuous Opportunity Scanning Loop")
+        
+        while self.is_running:
+            try:
+                # Scan opportunities once and share across accounts
+                opportunities = None
+                
+                # Use any scanner to get opportunities (they're market-based, not account-based)
+                for account_type, scanner in self.opportunity_scanners.items():
+                    if opportunities is None:
+                        opportunities = scanner.scan_opportunities()
+                        break
+                
+                if opportunities:
+                    # Prioritize with DeepSeek
+                    prioritized = self.deepseek_ai.prioritize_opportunities(
+                        opportunities, self.open_positions, self.config.risk_parameters
+                    )
+                    
+                    # Update opportunity queue
+                    self.opportunity_queue = prioritized[:10]  # Keep top 10
+                    
+                time.sleep(180)  # 3 minutes between scans
+                
+            except Exception as e:
+                self.logger.error(f"Error in opportunity scanning: {e}")
+                time.sleep(60)
+    
+    def risk_monitoring_loop(self):
+        """Continuous risk monitoring for all accounts"""
+        self.logger.info("🛡️ Starting Real-time Risk Monitoring Loop")
+        
+        while self.is_running:
+            try:
+                # Monitor risk for each account
+                for account_type, risk_monitor in self.risk_monitors.items():
+                    account_positions = self.open_positions.get(account_type, {})
+                    
+                    risk_assessment = risk_monitor.assess_portfolio_risk(account_positions)
+                    
+                    # Trigger alerts if needed
+                    if risk_assessment.alert_level > 0:
+                        risk_assessment.account_type = account_type  # 🎯 Track which account
+                        self.risk_alerts.append(risk_assessment)
+                        self.handle_risk_alert(risk_assessment)
+                    
+                time.sleep(60)  # Check every minute
+                
+            except Exception as e:
+                self.logger.error(f"Error in risk monitoring: {e}")
+                time.sleep(30)
+    
+    def personalization_loop(self):
+        """Continuous learning of trading style"""
+        self.logger.info("🎯 Starting Personalization Learning Loop")
+        
+        while self.is_running:
+            try:
+                # Learn from recent trades weekly
+                if datetime.now().weekday() == 0:  # Every Monday
+                    self.personalizer.learn_from_recent_trades()
+                    
+                time.sleep(3600)  # Check every hour
+                
+            except Exception as e:
+                self.logger.error(f"Error in personalization: {e}")
+                time.sleep(3600)
+    
+    def main_coordination_loop(self):
+        """Main thread coordination and execution"""
+        self.logger.info("🎮 Starting Main Coordination Loop")
+        
+        # Schedule daily reports
+        schedule.every().day.at("18:00").do(self.generate_daily_report)
+        
+        last_opportunity_check = datetime.now()
+        
+        while self.is_running:
+            try:
+                # Check for new high-priority opportunities
+                current_time = datetime.now()
+                if (current_time - last_opportunity_check).seconds >= 30:
+                    self.process_opportunity_queue()
+                    last_opportunity_check = current_time
+                
+                # Process any risk alerts
+                self.process_risk_alerts()
+                
+                # Run scheduled tasks
+                schedule.run_pending()
+                
+                # User command interface
+                self.check_user_commands()
+                
+                time.sleep(5)  # 5 second heartbeat
+                
+            except Exception as e:
+                self.logger.error(f"Error in main coordination: {e}")
+                time.sleep(10)
+    
+    def process_opportunity_queue(self):
+        """Execute top opportunities across appropriate accounts"""
+        if not self.opportunity_queue:
+            return
+            
+        # Get top opportunities
+        top_opportunities = self.opportunity_queue[:3]
+        
+        for opportunity in top_opportunities:
+            # Determine which account(s) to execute on
+            target_accounts = self._select_target_accounts(opportunity)
+            
+            for account_type in target_accounts:
+                # Risk check for this specific account
+                risk_monitor = self.risk_monitors.get(account_type)
+                if risk_monitor and risk_monitor.approve_trade(opportunity, self.open_positions.get(account_type, {})):
+                    
+                    # Execute trade
+                    execution_result = self.tasty_api.execute_trade(opportunity, account_type)
+                    
+                    if execution_result.get('success'):
+                        # Handle both dict and dataclass opportunity objects
+                        symbol = opportunity.get('symbol', 'UNKNOWN') if isinstance(opportunity, dict) else getattr(opportunity, 'symbol', 'UNKNOWN')
+                        self.logger.info(f"✅ Executed trade on {account_type}: {symbol}")
+                        
+                        # Update positions
+                        position_id = execution_result.get('position_id', f"{symbol}_{datetime.now().timestamp()}")
+                        if account_type not in self.open_positions:
+                            self.open_positions[account_type] = {}
+                        self.open_positions[account_type][position_id] = execution_result
+                        
+                        # Remove from queue after successful execution
+                        if account_type == 'live':  # Only remove if executed on live account
+                            self.opportunity_queue.remove(opportunity)
+                            break
+    
+    def _select_target_accounts(self, opportunity) -> List[str]:
+        """Select which accounts should execute this opportunity"""
+        target_accounts = []
+        confidence = getattr(opportunity, 'ai_confidence', 0)
+        
+        # Strategy: Use paper for testing, live for high-confidence opportunities
+        if confidence >= 0.8 and 'live' in self.trade_managers:
+            target_accounts.append('live')
+        
+        # Always include paper for tracking and validation
+        if 'paper' in self.trade_managers:
+            target_accounts.append('paper')
+            
+        return target_accounts
+    
+    def process_risk_alerts(self):
+        """Handle any active risk alerts"""
+        while self.risk_alerts:
+            alert = self.risk_alerts.pop(0)
+            self.handle_risk_alert(alert)
+    
+    def handle_risk_alert(self, alert):
+        """Take action on risk alerts for specific account"""
+        account_type = getattr(alert, 'account_type', 'unknown')
+        self.logger.warning(f"🚨 {account_type.upper()} Risk Alert: {alert.message} - Level: {alert.alert_level}")
+        
+        # Convert RiskAssessment dataclass to dict for dashboard
+        alert_dict = {
+            'level': alert.alert_level,
+            'message': alert.message,
+            'concerns': alert.concerns,
+            'recommendations': alert.recommendations,
+            'account_type': account_type
+        }
+        
+        # Send notification
+        self.dashboard.send_alert(alert_dict)
+        
+        # Take automatic actions for high-level alerts
+        if alert.alert_level >= 8:
+            self.logger.critical(f"🛑 CRITICAL RISK on {account_type} - Taking protective actions")
+            risk_monitor = self.risk_monitors.get(account_type)
+            if risk_monitor:
+                protective_actions = risk_monitor.get_protective_actions(alert)
+                for action in protective_actions:
+                    action.account_type = account_type
+                    self.execute_management_action(action)
+    
+    def execute_management_action(self, action):
+        """Execute trade management actions on specific account"""
+        try:
+            account_type = getattr(action, 'account_type', 'paper')
+            account_api = self.tasty_api.get_account(account_type)
+            
+            if not account_api:
+                self.logger.error(f"❌ Account {account_type} not found for action")
+                return
+            
+            if action.action_type == "CLOSE":
+                result = account_api.api_instance.close_position(action.position_id)
+            elif action.action_type == "ROLL":
+                result = account_api.api_instance.roll_position(action.position_id, action.new_params)
+            elif action.action_type == "ADJUST":
+                result = account_api.api_instance.adjust_position(action.position_id, action.adjustments)
+            else:
+                self.logger.warning(f"Unknown action type: {action.action_type}")
+                return
+                
+            if result.success:
+                self.logger.info(f"✅ Executed {action.action_type} on {account_type} - {action.position_id}")
+                
+                # Update positions
+                if action.action_type == "CLOSE":
+                    self.open_positions.get(account_type, {}).pop(action.position_id, None)
+                else:
+                    self.open_positions.get(account_type, {})[action.position_id] = result.updated_position
+                    
+        except Exception as e:
+            self.logger.error(f"Error executing management action on {account_type}: {e}")
+    
+    def generate_daily_report(self):
+        """Generate and display daily report for all accounts"""
+        self.logger.info("📊 Generating daily trading report")
+        
+        balances = self.tasty_api.get_account_balances()
+        self.dashboard.generate_dual_account_report(self.open_positions, self.opportunity_queue, balances)
+    
+    def check_user_commands(self):
+        """Check for user commands (future enhancement)"""
+        # Placeholder for user interaction interface
+        # Could include commands like: switch mode, force scan, etc.
+        pass
+    
+    def switch_trading_mode(self, new_mode: str):
+        """Dynamically switch trading mode"""
+        try:
+            self.tasty_api.switch_mode(new_mode)
+            self.current_trading_mode = new_mode
+            self._initialize_account_systems()  # Reinitialize systems
+            self.logger.info(f"🔄 Trading mode switched to: {new_mode}")
+        except Exception as e:
+            self.logger.error(f"❌ Failed to switch trading mode: {e}")
+    
+    def stop_system(self):
+        """Gracefully stop the system"""
+        self.logger.info("🛑 Stopping dual-account trading system...")
+        self.is_running = False
+
+def main():
+    """Main entry point for dual-account system"""
+    try:
+        # Load configuration
+        config = TradingConfig()
+        
+        # Initialize orchestrator
+        orchestrator = DualAccountTradingOrchestrator(config)
+        
+        # Start the system
+        orchestrator.start_continuous_operation()
+        
+    except KeyboardInterrupt:
+        print("\n🛑 System stopped by user")
+    except Exception as e:
+        print(f"❌ System error: {e}")
+        logging.error(f"System error: {e}")
+
+if __name__ == "__main__":
+    main()

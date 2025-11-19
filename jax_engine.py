@@ -79,6 +79,10 @@ class JAXRealTimeAnalytics:
         sigma = sigma.astype(jnp.float64)
         option_type = option_type.astype(jnp.float64)
 
+        # 🎯 SAFETY: Clip T and sigma to avoid division by zero
+        T = jnp.maximum(T, 1e-5)
+        sigma = jnp.maximum(sigma, 1e-5)
+
         d1 = (jnp.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * jnp.sqrt(T))
         d2 = d1 - sigma * jnp.sqrt(T)
         

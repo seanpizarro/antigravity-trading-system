@@ -54,5 +54,17 @@
     "entry_time": "2025-11-17T16:32:57.088653",
     "order_id": "PAPER_1763425977",
     "underlying_price": 0
+  },
+  "SPY_631.0_put_1763571021": {
+    "symbol": "SPY",
+    "strike": 631.0,
+    "option_type": "put",
+    "expiration": "2025-11-19",
+    "strategy": "PUT_CREDIT_SPREAD",
+    "quantity": 1,
+    "entry_price": 0.02,
+    "entry_time": "2025-11-19T08:50:21.338659",
+    "order_id": "bc3e850b-8124-460f-a0d4-9d7f2b27cd8d",
+    "underlying_price": 661.28
   }
 }

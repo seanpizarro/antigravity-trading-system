@@ -356,6 +356,7 @@ class DeepSeekMultiTaskAI:
            - Concerns or vulnerabilities
            - Recommended risk management actions
         
+            
         5. TOMORROW'S OUTLOOK:
            - Market expectations and key levels
            - Positions requiring close monitoring
@@ -380,6 +381,11 @@ class DeepSeekMultiTaskAI:
         """
         Make API call to DeepSeek with error handling and rate limiting
         """
+        # 🎯 Check for valid API key
+        if not self.api_key or "YOUR_DEEPSEEK_API_KEY" in self.api_key:
+            self.logger.warning("⚠️ DeepSeek API Key missing or invalid. Using fallback.")
+            return self._get_fallback_response(task_type)
+
         try:
             messages = [
                 {

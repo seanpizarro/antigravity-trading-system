@@ -219,11 +219,42 @@ class TastyTradeAPI:
                 account_number = "5PAPER123"  # Default paper account
             
             if not account_number:
-                self.logger.error("❌ No account number configured")
-                return AccountData(0, 0, 0, 0, [])
-            
+                # 🎯 Try to fetch account number dynamically if not set
+                self.logger.info("🔍 No account number configured, attempting to fetch from API...")
+                accounts = self._make_request('GET', '/customers/me/accounts')
+                if 'data' in accounts and 'items' in accounts['data']:
+                    items = accounts['data']['items']
+                    if items:
+                        account_number = items[0]['account']['account-number']
+                        self.account_number = account_number # Cache it
+                        self.logger.info(f"✅ Found account number: {account_number}")
+                    else:
+                        self.logger.error("❌ No accounts found for this user")
+                        return AccountData(0, 0, 0, 0, [])
+                else:
+                    self.logger.error("❌ Failed to fetch accounts list")
+                    return AccountData(0, 0, 0, 0, [])
+
             # Get account balances
             balances_response = self._make_request('GET', f'/accounts/{account_number}/balances')
+            
+            # 🎯 Handle 403 specifically by trying to re-fetch account number
+            if isinstance(balances_response, dict) and 'error' in balances_response:
+                error_msg = str(balances_response.get('error', ''))
+                if '403' in error_msg or 'Forbidden' in error_msg:
+                    self.logger.warning(f"⚠️ 403 Forbidden on account {account_number}. Trying to rediscover accounts...")
+                    # Try to fetch accounts again to see if we have the wrong number
+                    accounts = self._make_request('GET', '/customers/me/accounts')
+                    if 'data' in accounts and 'items' in accounts['data']:
+                        items = accounts['data']['items']
+                        if items:
+                            new_account = items[0]['account']['account-number']
+                            if new_account != account_number:
+                                self.logger.info(f"✅ Found correct account number: {new_account}")
+                                self.account_number = new_account
+                                account_number = new_account
+                                # Retry balances
+                                balances_response = self._make_request('GET', f'/accounts/{account_number}/balances')
             
             if 'error' in balances_response:
                 self.logger.warning(f"⚠️ Could not fetch balances: {balances_response.get('error')}")

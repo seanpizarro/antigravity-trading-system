@@ -102,24 +102,42 @@ class DualTastyTradeAPI:
     def _initialize_accounts(self):
         """Initialize live and/or paper accounts based on configuration"""
         from tastytrade_api import TastyTradeAPI
+        from alpaca_api import AlpacaAPI
         
         if self.trading_mode in ['paper', 'both']:
-            # Initialize paper account
-            paper_api = TastyTradeAPI(sandbox=True)
-            if paper_api.access_token:
-                paper_account_number = os.getenv('TASTYTRADE_PAPER_ACCOUNT_NUMBER')
-                if not paper_account_number:
-                    self.logger.warning("⚠️ TASTYTRADE_PAPER_ACCOUNT_NUMBER not set. Using mock account.")
-                    paper_account_number = "MOCK_PAPER_ACCOUNT"
-                    
+            # Check for Alpaca credentials first for paper trading
+            if os.getenv('ALPACA_API_KEY'):
+                self.logger.info("🦙 Found Alpaca credentials - Using Alpaca for Paper Trading")
+                paper_api = AlpacaAPI(paper=True)
+                # Alpaca doesn't have 'access_token' check in the same way, so we assume it's good if initialized
+                # But we should check if it connected successfully (it logs it)
+                
                 self.accounts['paper'] = AccountInfo(
-                    name="Paper Trading",
-                    account_number=paper_account_number,
+                    name="Alpaca Paper",
+                    account_number="ALPACA_PAPER",
                     is_paper=True,
                     api_instance=paper_api,
-                    balance=float(os.getenv('TASTYTRADE_PAPER_BALANCE', '100000.00'))
+                    balance=paper_api.get_account_balances().get('net_liquidating_value', 100000.0)
                 )
-                self.logger.info("✅ Paper trading account initialized")
+                self.logger.info("✅ Alpaca Paper trading account initialized")
+            else:
+                # Fallback to TastyTrade Sandbox
+                self.logger.info("ℹ️ No Alpaca credentials - Using TastyTrade Sandbox for Paper Trading")
+                paper_api = TastyTradeAPI(sandbox=True)
+                if paper_api.access_token:
+                    paper_account_number = os.getenv('TASTYTRADE_PAPER_ACCOUNT_NUMBER')
+                    if not paper_account_number:
+                        self.logger.warning("⚠️ TASTYTRADE_PAPER_ACCOUNT_NUMBER not set. Using mock account.")
+                        paper_account_number = "MOCK_PAPER_ACCOUNT"
+                        
+                    self.accounts['paper'] = AccountInfo(
+                        name="TastyTrade Paper",
+                        account_number=paper_account_number,
+                        is_paper=True,
+                        api_instance=paper_api,
+                        balance=float(os.getenv('TASTYTRADE_PAPER_BALANCE', '100000.00'))
+                    )
+                    self.logger.info("✅ TastyTrade Paper trading account initialized")
         
         if self.trading_mode in ['live', 'both']:
             # Initialize live account

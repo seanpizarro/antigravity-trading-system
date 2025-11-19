@@ -47,41 +47,52 @@ class MultiBrokerAPI:
         # Initialize available brokers
         self.brokers = {}
         self.active_broker = None
+        self.broker_health = {}  # Track broker connection status
 
         # Initialize TastyTrade if credentials available
-        if self.config.tastytrade_credentials:
+        if self.config.tastytrade_credentials and self.config.tastytrade_credentials.get('client_id'):
             try:
                 self.brokers[BrokerType.TASTYTRADE] = DualTastyTradeAPI()
+                self.broker_health[BrokerType.TASTYTRADE] = True
                 self.logger.info("✅ TastyTrade API initialized")
             except Exception as e:
+                self.broker_health[BrokerType.TASTYTRADE] = False
                 self.logger.warning(f"❌ Failed to initialize TastyTrade: {e}")
 
         # Initialize Alpaca if credentials available
-        if self.config.alpaca_credentials:
+        if self.config.alpaca_credentials and self.config.alpaca_credentials.get('api_key'):
             try:
-                self.brokers[BrokerType.ALPACA] = AlpacaAPI(
-                    api_key=self.config.alpaca_credentials['api_key'],
-                    api_secret=self.config.alpaca_credentials['api_secret'],
-                    base_url=self.config.alpaca_credentials['base_url']
-                )
-                self.logger.info("✅ Alpaca API initialized")
+                alpaca = AlpacaAPI()  # Use default initialization
+                if alpaca.connected:  # Check if connection succeeded
+                    self.brokers[BrokerType.ALPACA] = alpaca
+                    self.broker_health[BrokerType.ALPACA] = True
+                    self.logger.info("✅ Alpaca API initialized")
+                else:
+                    self.broker_health[BrokerType.ALPACA] = False
+                    self.logger.warning("❌ Alpaca connection failed")
             except Exception as e:
+                self.broker_health[BrokerType.ALPACA] = False
                 self.logger.warning(f"❌ Failed to initialize Alpaca: {e}")
 
-        # Set active broker
+        # Set active broker (prefer healthy brokers)
         if preferred_broker:
             broker_type = BrokerType(preferred_broker.lower())
-            if broker_type in self.brokers:
+            if broker_type in self.brokers and self.broker_health.get(broker_type, False):
                 self.active_broker = broker_type
-        else:
-            # Default to first available broker
-            if self.brokers:
-                self.active_broker = list(self.brokers.keys())[0]
+            else:
+                self.logger.warning(f"⚠️  Preferred broker {preferred_broker} not available")
+        
+        # If no active broker set, choose first healthy broker
+        if not self.active_broker:
+            for broker_type in self.brokers.keys():
+                if self.broker_health.get(broker_type, False):
+                    self.active_broker = broker_type
+                    break
 
         if self.active_broker:
             self.logger.info(f"🎯 Active broker: {self.active_broker.value}")
         else:
-            self.logger.warning("⚠️  No brokers available")
+            self.logger.warning("⚠️  No healthy brokers available")
 
     def get_account_info(self) -> Optional[UnifiedAccountInfo]:
         """Get unified account information"""
@@ -215,12 +226,16 @@ class MultiBrokerAPI:
             return False
 
     def get_available_brokers(self) -> List[str]:
-        """Get list of available brokers"""
-        return [broker.value for broker in self.brokers.keys()]
+        """Get list of available and healthy brokers"""
+        return [broker.value for broker in self.brokers.keys() if self.broker_health.get(broker, False)]
 
     def get_active_broker(self) -> Optional[str]:
         """Get currently active broker"""
         return self.active_broker.value if self.active_broker else None
+    
+    def get_broker_health(self) -> Dict[str, bool]:
+        """Get health status of all configured brokers"""
+        return {broker.value: status for broker, status in self.broker_health.items()}
 
     def is_market_open(self) -> bool:
         """Check if market is open"""

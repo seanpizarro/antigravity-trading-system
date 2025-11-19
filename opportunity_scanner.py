@@ -25,11 +25,11 @@ class OpportunityScanner:
             self.logger.info("🌙 MARKET CLOSED - Using enhanced mock opportunities")
             opportunities = self._create_mock_opportunities()
             
-            # Log the mock opportunities (handle dict access safely)
+            # Log the mock opportunities (standardized dict access)
             for opp in opportunities:
-                symbol = opp.get('symbol', 'UNKNOWN') if isinstance(opp, dict) else getattr(opp, 'symbol', 'UNKNOWN')
-                strategy = opp.get('strategy', 'N/A') if isinstance(opp, dict) else getattr(opp, 'strategy', 'N/A')
-                premium = opp.get('premium', 0) if isinstance(opp, dict) else getattr(opp, 'premium', 0)
+                symbol = opp.get('symbol', 'UNKNOWN')
+                strategy = opp.get('strategy', 'N/A')
+                premium = opp.get('premium', 0)
                 self.logger.info(f"🎯 MOCK OPPORTUNITY: {symbol} {strategy} - ${premium:.2f}")
             
             return opportunities
@@ -46,19 +46,19 @@ class OpportunityScanner:
         scores = []
         
         # AI Confidence (40% weight)
-        scores.append(getattr(opportunity, 'ai_confidence', 0) * 0.4)
+        scores.append(opportunity.get('ai_confidence', 0) * 0.4)
         
         # Volume quality (20% weight)
-        volume_score = min(getattr(opportunity, 'volume', 0) / 2000, 1.0)
+        volume_score = min(opportunity.get('volume', 0) / 2000, 1.0)
         scores.append(volume_score * 0.2)
         
         # Liquidity score (20% weight)
-        spread = getattr(opportunity, 'bid_ask_spread', 0.1)
+        spread = opportunity.get('bid_ask_spread', 0.1)
         spread_score = max(0, 1 - (spread / 0.2))  # Prefer spreads < $0.20
         scores.append(spread_score * 0.2)
         
         # IV Rank (20% weight) - prefer moderate IV
-        iv = getattr(opportunity, 'implied_volatility', 20)
+        iv = opportunity.get('implied_volatility', 20)
         iv_score = 1 - abs(iv - 25) / 50  # Prefer IV around 25%
         scores.append(max(0, iv_score) * 0.2)
         

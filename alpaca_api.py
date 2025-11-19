@@ -1,11 +1,25 @@
-# alpaca_api.py - Alpaca Trading API Integration
-import os
-import logging
+"""
+ALPACA API INTEGRATION - Paper Trading Support
+"""
+
 import requests
-from datetime import datetime
-from typing import Dict, List, Optional, Any
-from dataclasses import dataclass
+import json
+import os
 import time
+import logging
+from datetime import datetime
+from typing import Dict, List, Optional
+from dataclasses import dataclass
+
+@dataclass
+class TradeResult:
+    """Result of trade execution"""
+    success: bool
+    position_id: str
+    fill_price: float
+    quantity: int
+    message: str
+    timestamp: datetime
 
 @dataclass
 class AlpacaAccountInfo:
@@ -33,189 +47,222 @@ class AlpacaPosition:
 
 class AlpacaAPI:
     """
-    Alpaca Trading API wrapper for paper and live trading
+    Alpaca API integration for paper trading
     """
-
-    def __init__(self, api_key: str, api_secret: str, base_url: str = "https://paper-api.alpaca.markets/v2"):
+    
+    def __init__(self, paper: bool = True):
+        self.paper = paper
         self.logger = logging.getLogger(__name__)
-        self.api_key = api_key
-        self.api_secret = api_secret
-        self.base_url = base_url
-        self.session = requests.Session()
-        self.session.headers.update({
-            'APCA-API-KEY-ID': self.api_key,
-            'APCA-API-SECRET-KEY': self.api_secret
-        })
-
-        # Rate limiting
-        self.last_request_time = 0
-        self.min_request_interval = 0.1  # Alpaca allows higher rate limits
-
-    def _make_request(self, method: str, endpoint: str, **kwargs) -> Dict:
-        """Make authenticated request to Alpaca API with rate limiting"""
-        # Rate limiting
-        elapsed = time.time() - self.last_request_time
-        if elapsed < self.min_request_interval:
-            time.sleep(self.min_request_interval - elapsed)
-
-        url = f"{self.base_url}{endpoint}"
-        self.last_request_time = time.time()
-
+        
+        # Load credentials (standardized to match .env)
+        self.api_key = os.getenv('ALPACA_API_KEY')
+        self.secret_key = os.getenv('ALPACA_API_SECRET', os.getenv('ALPACA_SECRET_KEY'))  # Support both names
+        self.base_url = os.getenv('ALPACA_BASE_URL', os.getenv('ALPACA_ENDPOINT', 'https://paper-api.alpaca.markets/v2'))
+        
+        if not self.api_key or not self.secret_key:
+            self.logger.warning("⚠️ Alpaca credentials not found in environment")
+            self.connected = False
+        else:
+            self.headers = {
+                "APCA-API-KEY-ID": self.api_key,
+                "APCA-API-SECRET-KEY": self.secret_key,
+                "Content-Type": "application/json"
+            }
+            
+            # Rate limiting
+            self.last_request_time = 0
+            self.min_request_interval = 0.2  # 200ms between requests
+            
+            # Verify connection
+            self.connected = self._verify_connection()
+        
+    def _verify_connection(self) -> bool:
+        """Verify connection to Alpaca"""
         try:
-            response = self.session.request(method, url, **kwargs)
-            response.raise_for_status()
-            return response.json() if response.content else {}
-        except requests.exceptions.RequestException as e:
-            self.logger.error(f"Alpaca API request failed: {e}")
-            raise
-
-    def get_account(self) -> AlpacaAccountInfo:
-        """Get account information"""
-        try:
-            data = self._make_request('GET', '/account')
-            return AlpacaAccountInfo(
-                account_id=data['id'],
-                cash=float(data['cash']),
-                portfolio_value=float(data['portfolio_value']),
-                buying_power=float(data['buying_power']),
-                daytrade_count=int(data['daytrade_count']),
-                status=data['status']
-            )
+            response = requests.get(f"{self.base_url}/account", headers=self.headers, timeout=10)
+            if response.status_code == 200:
+                account = response.json()
+                self.logger.info(f"✅ Connected to Alpaca Paper Account: {account.get('id')} (${float(account.get('equity', 0)):,.2f})")
+                return True
+            else:
+                self.logger.error(f"❌ Alpaca connection failed: {response.text}")
+                return False
         except Exception as e:
-            self.logger.error(f"Failed to get account info: {e}")
-            raise
-
-    def get_positions(self) -> List[AlpacaPosition]:
-        """Get all positions"""
-        try:
-            data = self._make_request('GET', '/positions')
-            positions = []
-            for pos in data:
-                positions.append(AlpacaPosition(
-                    symbol=pos['symbol'],
-                    qty=float(pos['qty']),
-                    avg_entry_price=float(pos['avg_entry_price']),
-                    market_value=float(pos['market_value']),
-                    cost_basis=float(pos['cost_basis']),
-                    unrealized_pl=float(pos['unrealized_pl']),
-                    unrealized_plpc=float(pos['unrealized_plpc']),
-                    current_price=float(pos['current_price']),
-                    lastday_price=float(pos['lastday_price']),
-                    change_today=float(pos['change_today'])
-                ))
-            return positions
-        except Exception as e:
-            self.logger.error(f"Failed to get positions: {e}")
-            return []
-
-    def get_position(self, symbol: str) -> Optional[AlpacaPosition]:
-        """Get position for specific symbol"""
-        try:
-            data = self._make_request('GET', f'/positions/{symbol}')
-            return AlpacaPosition(
-                symbol=data['symbol'],
-                qty=float(data['qty']),
-                avg_entry_price=float(data['avg_entry_price']),
-                market_value=float(data['market_value']),
-                cost_basis=float(data['cost_basis']),
-                unrealized_pl=float(data['unrealized_pl']),
-                unrealized_plpc=float(data['unrealized_plpc']),
-                current_price=float(data['current_price']),
-                lastday_price=float(data['lastday_price']),
-                change_today=float(data['change_today'])
-            )
-        except Exception as e:
-            self.logger.error(f"Failed to get position for {symbol}: {e}")
-            return None
-
-    def place_order(self, symbol: str, qty: int, side: str, order_type: str,
-                   time_in_force: str = 'day', limit_price: float = None) -> Dict:
-        """
-        Place an order
-        Args:
-            symbol: Stock symbol
-            qty: Quantity
-            side: 'buy' or 'sell'
-            order_type: 'market', 'limit', 'stop', 'stop_limit'
-            time_in_force: 'day', 'gtc', 'opg', 'cls', 'ioc', 'fok'
-            limit_price: Limit price for limit orders
-        """
-        order_data = {
-            'symbol': symbol,
-            'qty': str(qty),
-            'side': side,
-            'type': order_type,
-            'time_in_force': time_in_force
-        }
-
-        if limit_price and order_type in ['limit', 'stop_limit']:
-            order_data['limit_price'] = str(limit_price)
-
-        try:
-            response = self._make_request('POST', '/orders', json=order_data)
-            self.logger.info(f"Order placed: {response}")
-            return response
-        except Exception as e:
-            self.logger.error(f"Failed to place order: {e}")
-            raise
-
-    def cancel_order(self, order_id: str) -> bool:
-        """Cancel an order"""
-        try:
-            self._make_request('DELETE', f'/orders/{order_id}')
-            self.logger.info(f"Order {order_id} cancelled")
-            return True
-        except Exception as e:
-            self.logger.error(f"Failed to cancel order {order_id}: {e}")
+            self.logger.error(f"❌ Alpaca connection error: {e}")
             return False
 
-    def get_orders(self, status: str = 'open') -> List[Dict]:
-        """Get orders (open, closed, all)"""
-        try:
-            params = {'status': status} if status != 'all' else {}
-            data = self._make_request('GET', '/orders', params=params)
-            return data
-        except Exception as e:
-            self.logger.error(f"Failed to get orders: {e}")
-            return []
+    def _rate_limit(self):
+        """Enforce rate limiting between requests"""
+        if hasattr(self, 'last_request_time'):
+            elapsed = time.time() - self.last_request_time
+            if elapsed < self.min_request_interval:
+                time.sleep(self.min_request_interval - elapsed)
+            self.last_request_time = time.time()
 
-    def get_clock(self) -> Dict:
-        """Get market clock"""
+    def get_account_balances(self) -> Dict:
+        """Get account balances with rate limiting"""
+        if not self.connected:
+            return {}
+            
         try:
-            return self._make_request('GET', '/clock')
+            self._rate_limit()
+            response = requests.get(f"{self.base_url}/account", headers=self.headers, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                return {
+                    'net_liquidating_value': float(data.get('equity', 0)),
+                    'maintenance_excess': float(data.get('buying_power', 0)),
+                    'cash_balance': float(data.get('cash', 0))
+                }
+            return {}
         except Exception as e:
-            self.logger.error(f"Failed to get market clock: {e}")
+            self.logger.error(f"Error fetching Alpaca balances: {e}")
             return {}
 
-    def get_asset(self, symbol: str) -> Optional[Dict]:
-        """Get asset information"""
+    def get_positions(self) -> Dict:
+        """Get all open positions normalized to system format"""
+        if not self.connected:
+            return {}
+            
+        positions = {}
         try:
-            return self._make_request('GET', f'/assets/{symbol}')
+            self._rate_limit()
+            response = requests.get(f"{self.base_url}/positions", headers=self.headers, timeout=10)
+            if response.status_code == 200:
+                alpaca_positions = response.json()
+                for pos in alpaca_positions:
+                    # Normalize to system format
+                    symbol = pos['symbol']
+                    quantity = int(pos['qty'])
+                    market_value = float(pos['market_value'])
+                    
+                    # Create position ID
+                    position_id = f"{symbol}_{pos['asset_id']}"
+                    
+                    positions[position_id] = {
+                        'position_id': position_id,
+                        'symbol': symbol,
+                        'ticker': symbol,
+                        'quantity': quantity,
+                        'market_value': market_value,
+                        'current_price': float(pos['current_price']),
+                        'average_open_price': float(pos['avg_entry_price']),
+                        'unrealized_pnl': float(pos['unrealized_pl']),
+                        'unrealized_pnl_percent': float(pos['unrealized_plpc']),
+                        'cost_basis': float(pos['cost_basis']),
+                        'asset_class': pos['asset_class'],
+                        # Add option specific fields if applicable (Alpaca supports options now, but basic mapping here)
+                        'strategy_type': 'EQUITY' if pos['asset_class'] == 'us_equity' else 'OPTION',
+                        'legs': [{'symbol': symbol, 'quantity': quantity, 'type': pos['asset_class']}]
+                    }
+            return positions
         except Exception as e:
-            self.logger.error(f"Failed to get asset {symbol}: {e}")
-            return None
+            self.logger.error(f"Error fetching Alpaca positions: {e}")
+            return {}
 
-    def get_quote(self, symbol: str) -> Optional[Dict]:
-        """Get latest quote for symbol"""
-        try:
-            return self._make_request('GET', f'/last/quote/{symbol}')
-        except Exception as e:
-            self.logger.error(f"Failed to get quote for {symbol}: {e}")
-            return None
+    def execute_paper_trade(self, symbol: str, order_type: str, quantity: int, price: float = 0.0) -> Dict:
+        """Execute a paper trade (wrapper for execute_trade to match TastyTradeAPI interface)"""
+        order = {
+            'symbol': symbol,
+            'quantity': quantity,
+            'action': 'buy', # Default to buy for simple paper trades
+            'type': order_type
+        }
+        result = self.execute_trade(order)
+        
+        return {
+            "success": result.success,
+            "order_id": result.position_id,
+            "symbol": symbol,
+            "quantity": quantity,
+            "price": price, # Alpaca fills async, so we use requested price for immediate feedback
+            "message": result.message,
+            "error": result.message if not result.success else None
+        }
 
-    def get_bars(self, symbol: str, timeframe: str = '1D', limit: int = 100) -> List[Dict]:
-        """Get historical bars"""
+    def execute_trade(self, order: Dict) -> TradeResult:
+        """Execute a trade on Alpaca with validation"""
+        if not self.connected:
+            return TradeResult(False, "", 0.0, 0, "Not connected to Alpaca", datetime.now())
+            
         try:
-            params = {
-                'timeframe': timeframe,
-                'limit': limit
+            # Map system order to Alpaca order
+            symbol = order.get('symbol')
+            qty = order.get('quantity', 1)
+            side = order.get('action', 'buy').lower()
+            
+            if not symbol or qty <= 0:
+                return TradeResult(False, "", 0.0, 0, "Invalid order parameters", datetime.now())
+            
+            type = 'market'  # Default to market for now
+            
+            payload = {
+                "symbol": symbol,
+                "qty": qty,
+                "side": side,
+                "type": type,
+                "time_in_force": "day"
             }
-            return self._make_request('GET', f'/bars/{symbol}', params=params)
+            
+            self._rate_limit()
+            response = requests.post(f"{self.base_url}/orders", json=payload, headers=self.headers, timeout=10)
+            
+            if response.status_code == 200 or response.status_code == 201:
+                order_data = response.json()
+                return TradeResult(
+                    success=True,
+                    position_id=order_data.get('id'),
+                    fill_price=0.0, # Async fill
+                    quantity=qty,
+                    message=f"Order submitted: {order_data.get('status')}",
+                    timestamp=datetime.now()
+                )
+            else:
+                return TradeResult(
+                    success=False,
+                    position_id="",
+                    fill_price=0.0,
+                    quantity=0,
+                    message=f"Alpaca Error: {response.text}",
+                    timestamp=datetime.now()
+                )
+                
         except Exception as e:
-            self.logger.error(f"Failed to get bars for {symbol}: {e}")
-            return []
+            self.logger.error(f"Error executing Alpaca trade: {e}")
+            return TradeResult(False, "", 0.0, 0, str(e), datetime.now())
 
     def is_market_open(self) -> bool:
         """Check if market is currently open"""
-        clock = self.get_clock()
-        return clock.get('is_open', False) if clock else False
+        if not self.connected:
+            return False
+        
+        try:
+            self._rate_limit()
+            response = requests.get(f"{self.base_url}/clock", headers=self.headers, timeout=10)
+            if response.status_code == 200:
+                clock = response.json()
+                return clock.get('is_open', False)
+            return False
+        except Exception as e:
+            self.logger.error(f"Error checking market status: {e}")
+            return False
+
+    def close_position(self, position_id: str) -> TradeResult:
+        """Close a position by symbol or ID"""
+        try:
+            # Alpaca closes by symbol usually, or position ID if mapped
+            # Assuming position_id contains symbol or we look it up
+            # For simplicity, if position_id looks like a symbol, use it
+            
+            # Extract symbol if ID is composite
+            symbol = position_id.split('_')[0] if '_' in position_id else position_id
+            
+            response = requests.delete(f"{self.base_url}/positions/{symbol}", headers=self.headers)
+            
+            if response.status_code == 200:
+                return TradeResult(True, position_id, 0.0, 0, "Position close initiated", datetime.now())
+            else:
+                return TradeResult(False, position_id, 0.0, 0, f"Failed to close: {response.text}", datetime.now())
+                
+        except Exception as e:
+            return TradeResult(False, position_id, 0.0, 0, str(e), datetime.now())

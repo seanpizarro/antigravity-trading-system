@@ -21,30 +21,20 @@ def test_alpaca_connection():
         return False
 
     try:
-        # Initialize Alpaca API
-        alpaca = AlpacaAPI(
-            api_key=config.alpaca_credentials['api_key'],
-            api_secret=config.alpaca_credentials['api_secret'],
-            base_url=config.alpaca_credentials['base_url']
-        )
+        # Initialize Alpaca API (uses environment variables)
+        alpaca = AlpacaAPI()
 
         print("✅ Alpaca API initialized successfully")
 
         # Test account info
         print("📊 Getting account information...")
-        account = alpaca.get_account()
-        print(f"   Account ID: {account.account_id}")
-        print(".2f")
-        print(".2f")
-        print(f"   Status: {account.status}")
+        balances = alpaca.get_account_balances()
+        print(f"   Cash: ${balances.get('cash_balance', 0):,.2f}")
+        print(f"   Portfolio Value: ${balances.get('net_liquidating_value', 0):,.2f}")
+        print(f"   Buying Power: ${balances.get('maintenance_excess', 0):,.2f}")
 
         # Test market clock
-        print("🕐 Checking market status...")
-        clock = alpaca.get_clock()
-        if clock:
-            print(f"   Market Open: {clock.get('is_open', 'Unknown')}")
-            print(f"   Next Open: {clock.get('next_open', 'Unknown')}")
-            print(f"   Next Close: {clock.get('next_close', 'Unknown')}")
+        print("🕐 Market is currently:", "Open" if alpaca.is_market_open() else "Closed")
 
         # Test getting positions
         print("📈 Getting positions...")
@@ -52,14 +42,8 @@ def test_alpaca_connection():
         print(f"   Found {len(positions)} positions")
 
         if positions:
-            for pos in positions[:3]:  # Show first 3 positions
-                print(f"   {pos.symbol}: {pos.qty} @ ${pos.avg_entry_price:.2f} (P&L: ${pos.unrealized_pl:.2f})")
-
-        # Test getting a quote
-        print("💰 Getting SPY quote...")
-        quote = alpaca.get_quote('SPY')
-        if quote:
-            print(f"   SPY Ask: ${quote.get('askprice', 'N/A')}, Bid: ${quote.get('bidprice', 'N/A')}")
+            for pos_id, pos in list(positions.items())[:3]:  # Show first 3 positions
+                print(f"   {pos.get('symbol', 'N/A')}: {pos.get('quantity', 0)} @ ${pos.get('average_open_price', 0):.2f}")
 
         print("✅ Alpaca API test completed successfully!")
         return True

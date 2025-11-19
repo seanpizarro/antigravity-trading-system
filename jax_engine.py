@@ -302,6 +302,16 @@ class JAXRealTimeAnalytics:
         Calculate comprehensive metrics for a single position
         """
         try:
+            # Check if position has legs
+            if not position.get('legs') or len(position['legs']) == 0:
+                self.logger.warning(f"Position has no legs, returning default metrics")
+                return PositionMetrics(
+                    theoretical_value=0.0,
+                    probability_profit=0.5,
+                    expected_value=0.0,
+                    greeks=GreekMetrics(0.0, 0.0, 0.0, 0.0, 0.0)
+                )
+            
             # Extract position data
             S = jnp.array(position['underlying_price'])
             strikes = jnp.array([leg['strike'] for leg in position['legs']])
@@ -361,7 +371,17 @@ class JAXRealTimeAnalytics:
                      T: jnp.array, sigma: jnp.array, r: jnp.array) -> float:
         """Calculate probability of profit for a spread position"""
         try:
+            # Check if strikes array is empty
+            if len(strikes) == 0:
+                self.logger.warning("Empty strikes array, returning default POP")
+                return 0.5
+            
             if position['strategy_type'] == 'CREDIT_SPREAD':
+                # Check if we have at least 2 strikes for a spread
+                if len(strikes) < 2:
+                    self.logger.warning("Credit spread requires at least 2 strikes")
+                    return 0.5
+                    
                 # For credit spreads, POP = probability stock stays between strikes
                 short_strike = strikes[0]  # Assuming first leg is short
                 long_strike = strikes[1]   # Second leg is long

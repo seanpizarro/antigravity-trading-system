@@ -180,6 +180,7 @@ class ActiveTradeManager:
         if not positions:
             return actions
         now = datetime.now()
+        from types import SimpleNamespace
         for position_id, pos in positions.items():
             entry_time_str = pos.get('entry_time')
             if entry_time_str:
@@ -192,17 +193,26 @@ class ActiveTradeManager:
                         continue
             # Ensure position_id is present
             pos['position_id'] = position_id
+            # Ensure required keys for JAX and DeepSeek
+            pos.setdefault('ticker', 'SPY')
+            pos.setdefault('legs', [])
+            pos.setdefault('dte', 30)
+            pos.setdefault('strategy_type', 'CREDIT_SPREAD')
+            pos.setdefault('implied_volatility', 0.3)
+            pos.setdefault('max_loss', 100.0)
+            pos.setdefault('underlying_price', 100.0)
+            pos.setdefault('break_even_price', 100.0)
+            pos.setdefault('current_pnl', 0.0)
+            pos.setdefault('entry_date', pos.get('entry_time', datetime.now().isoformat()))
             # Convert dict to object for DeepSeek
-            position_obj = type('Position', (), pos)
+            position_obj = SimpleNamespace(**pos)
             # Calculate metrics via JAX engine
             metrics = self.jax_engine.calculate_position_metrics(pos)
-            
             # Check emergency conditions first
             emergency_action = self._check_emergency_conditions(position_obj, metrics)
             if emergency_action:
                 actions.append(emergency_action)
                 continue
-            
             # Otherwise, use DeepSeek AI for decision
             market_conditions = {}
             decision = self.deepseek_ai.analyze_position_management(position_obj, metrics, market_conditions)

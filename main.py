@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 import logging
 import logging.handlers
 from typing import Dict, List, Optional
+import yfinance as yf
 
 # Fix Windows console encoding for emojis
 if sys.platform == 'win32':
@@ -197,12 +198,78 @@ class DualAccountTradingOrchestrator:
                 self.logger.error(f"Error in trade management: {e}")
                 time.sleep(60)
     
+    def _get_current_vix(self) -> float:
+        """Fetch current VIX level with 5-minute caching"""
+        # Check cache first
+        if hasattr(self, '_vix_cache'):
+            cache_time, cached_vix = self._vix_cache
+            cache_age = (datetime.now() - cache_time).total_seconds() / 60
+            if cache_age < 5:
+                self.logger.debug(f"📊 VIX (cached {cache_age:.1f}min ago): {cached_vix:.2f}")
+                return cached_vix
+        
+        # Fetch fresh VIX data
+        try:
+            vix_ticker = yf.Ticker("^VIX")
+            vix_data = vix_ticker.history(period="1d")
+            
+            if vix_data.empty:
+                raise ValueError("Empty VIX data returned")
+            
+            vix = float(vix_data['Close'].iloc[-1])
+            
+            # Validate VIX is in reasonable range (5-80)
+            if not (5 <= vix <= 80):
+                self.logger.warning(f"⚠️ VIX {vix:.2f} out of range, using default 20")
+                return 20.0
+            
+            # Cache the result
+            self._vix_cache = (datetime.now(), vix)
+            self.logger.info(f"📊 VIX (fresh): {vix:.2f}")
+            return vix
+            
+        except Exception as e:
+            self.logger.warning(f"⚠️ VIX fetch failed: {e}, using default 20")
+            # Use cached value if available, even if stale
+            if hasattr(self, '_vix_cache'):
+                _, cached_vix = self._vix_cache
+                self.logger.info(f"📊 Using stale VIX cache: {cached_vix:.2f}")
+                return cached_vix
+            return 20.0
+    
     def opportunity_scanning_loop(self):
-        """Continuous opportunity scanning for all accounts"""
-        self.logger.info("🔍 Starting Continuous Opportunity Scanning Loop")
+        """Ultra-conservative VIX-based adaptive scanning (90% reduction)"""
+        self.logger.info("🔍 Starting Ultra-Conservative VIX-Adaptive Scanning")
+        scan_count = 0
         
         while self.is_running:
             try:
+                scan_count += 1
+                scan_start = datetime.now()
+                
+                # Ultra-conservative intervals for multi-week holdings
+                vix = self._get_current_vix()
+                if vix > 25:
+                    interval = 1200  # 20 minutes - high volatility
+                    volatility_state = "HIGH"
+                    emoji = "🔴"
+                    est_daily_scans = 20
+                elif vix > 20:
+                    interval = 1800  # 30 minutes - medium volatility
+                    volatility_state = "MEDIUM"
+                    emoji = "🟡"
+                    est_daily_scans = 13
+                else:
+                    interval = 3600  # 60 minutes - low volatility
+                    volatility_state = "LOW"
+                    emoji = "🟢"
+                    est_daily_scans = 7
+                
+                self.logger.info(
+                    f"{emoji} VIX {vix:.1f} ({volatility_state}) → {interval//60}min intervals "
+                    f"(~{est_daily_scans}/day) [Scan #{scan_count}]"
+                )
+                
                 # Scan opportunities once and share across accounts
                 opportunities = None
                 
@@ -220,8 +287,9 @@ class DualAccountTradingOrchestrator:
                     
                     # Update opportunity queue
                     self.opportunity_queue = prioritized[:10]  # Keep top 10
+                    self.logger.info(f"📊 Queue: {len(self.opportunity_queue)} opps")
                     
-                time.sleep(180)  # 3 minutes between scans
+                time.sleep(interval)  # Adaptive interval: 60/30/20 min
                 
             except Exception as e:
                 self.logger.error(f"Error in opportunity scanning: {e}")

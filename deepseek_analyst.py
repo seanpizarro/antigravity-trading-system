@@ -156,12 +156,12 @@ class DeepSeekMultiTaskAI:
         - Entry Date: {position.entry_date}
         
         CURRENT METRICS:
-        - Delta: {metrics.delta}
-        - Theta: {metrics.theta}
-        - Gamma: {metrics.gamma}
-        - Vega: {metrics.vega}
-        - Probability of Profit: {metrics.pop}
-        - Days Since Entry: {metrics.days_since_entry}
+        - Delta: {metrics.greeks.delta}
+        - Theta: {metrics.greeks.theta}
+        - Gamma: {metrics.greeks.gamma}
+        - Vega: {metrics.greeks.vega}
+        - Probability of Profit: {metrics.probability_profit}
+        - Theoretical Value: {metrics.theoretical_value}
         
         MARKET CONDITIONS:
         - VIX: {market_conditions.get('vix')}

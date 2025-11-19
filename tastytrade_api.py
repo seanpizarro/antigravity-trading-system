@@ -12,6 +12,10 @@ from datetime import datetime
 from typing import Dict, List, Optional
 from dataclasses import dataclass
 import logging
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 @dataclass
 class TradeResult:

@@ -15,6 +15,7 @@ import logging
 import logging.handlers
 from typing import Dict, List, Optional
 import yfinance as yf
+import yfinance as yf
 
 # Fix Windows console encoding for emojis
 if sys.platform == 'win32':
@@ -65,25 +66,24 @@ class DualAccountTradingOrchestrator:
         self.current_trading_mode = os.getenv('TRADING_MODE', 'paper')
         
     def _initialize_account_systems(self):
-        """Initialize trading systems for each active account"""
+        """Initialize trading systems for only selected active accounts"""
         accounts = self.tasty_api.get_all_accounts()
-        
+        active_accounts = set(getattr(self.config, 'active_accounts', []))
         for account_type, account_info in accounts.items():
+            if account_type not in active_accounts:
+                continue
             # Create trade manager for this account
             self.trade_managers[account_type] = ActiveTradeManager(
                 self.deepseek_ai, self.jax_engine, account_info.api_instance
             )
-            
             # Create opportunity scanner for this account
             self.opportunity_scanners[account_type] = OpportunityScanner(
                 self.jax_engine, account_info.api_instance
             )
-            
             # Create risk monitor for this account
             self.risk_monitors[account_type] = AccountRiskMonitor(
                 account_info.api_instance, self.deepseek_ai, self.config.risk_parameters
             )
-            
             self.logger.info(f"✅ Initialized systems for {account_info.name}")
     
     def setup_logging(self):
@@ -132,45 +132,51 @@ class DualAccountTradingOrchestrator:
         self.main_coordination_loop()
     
     def _print_system_info(self):
-        """Print dual account system configuration"""
+        """Print system configuration for only selected accounts, separated"""
         accounts = self.tasty_api.get_all_accounts()
         balances = self.tasty_api.get_account_balances()
-        
+        active_accounts = set(getattr(self.config, 'active_accounts', []))
         print("\n" + "="*60)
         print("🤖 DUAL-ACCOUNT AI TRADING SYSTEM")
         print("="*60)
         print(f"🔧 Trading Mode: {self.current_trading_mode.upper()}")
-        
-        for account_type, account_info in accounts.items():
-            balance = balances.get(account_type, 0)
-            print(f"💼 {account_info.name}: ${balance:,.2f}")
-            
         print(f"⚡ Scanner: Optimized (10-15 seconds)")
         print(f"🤖 AI Engine: DeepSeek + JAX")
         print(f"📊 Active Systems: {len(self.trade_managers)} account(s)")
+        print("="*60)
+        for account_type in active_accounts:
+            account_info = accounts.get(account_type)
+            balance = balances.get(account_type, 0)
+            print(f"\n--- {account_type.upper()} ACCOUNT ---")
+            if account_info and hasattr(account_info, 'name'):
+                print(f"💼 {account_info.name}: ${balance:,.2f}")
+            else:
+                print(f"💼 {account_type}: ${balance:,.2f}")
+            positions = self.open_positions.get(account_type, {})
+            print(f"📊 Positions: {len(positions)}")
         print("="*60 + "\n")
     
     def _format_positions_summary(self) -> str:
-        """Format positions summary for logging"""
+        """Format positions summary for logging, separated by active accounts"""
+        active_accounts = set(getattr(self.config, 'active_accounts', []))
         summary = []
-        for account_type, positions in self.open_positions.items():
+        for account_type in active_accounts:
+            positions = self.open_positions.get(account_type, {})
             summary.append(f"{account_type}: {len(positions)} positions")
         return ", ".join(summary) if summary else "No positions"
     
     def account_monitoring_loop(self):
-        """🎯 NEW: Monitor account balances and status"""
+        """🎯 NEW: Monitor account balances and status (only selected accounts)"""
         self.logger.info("💰 Starting Account Monitoring Loop")
-        
+        active_accounts = set(getattr(self.config, 'active_accounts', []))
         while self.is_running:
             try:
                 # Update account balances every 5 minutes
                 balances = self.tasty_api.get_account_balances()
-                
                 for account_type, balance in balances.items():
-                    self.logger.info(f"💰 {account_type.upper()} Balance: ${balance:,.2f}")
-                
+                    if account_type in active_accounts:
+                        self.logger.info(f"💰 {account_type.upper()} Balance: ${balance:,.2f}")
                 time.sleep(300)  # 5 minutes
-                
             except Exception as e:
                 self.logger.error(f"Error in account monitoring: {e}")
                 time.sleep(60)
@@ -289,7 +295,27 @@ class DualAccountTradingOrchestrator:
                     self.opportunity_queue = prioritized[:10]  # Keep top 10
                     self.logger.info(f"📊 Queue: {len(self.opportunity_queue)} opps")
                     
-                time.sleep(interval)  # Adaptive interval: 60/30/20 min
+                # Sleep with countdown timer
+                next_scan_time = datetime.now() + timedelta(seconds=interval)
+                self.logger.info(f"⏰ Next scan at: {next_scan_time.strftime('%I:%M:%S %p')}")
+                
+                # Countdown in chunks (show progress every minute for long waits)
+                if interval >= 300:  # 5+ minutes
+                    chunk_size = 60  # Show update every minute
+                else:
+                    chunk_size = interval  # Just sleep the whole time
+                
+                remaining = interval
+                while remaining > 0 and self.is_running:
+                    sleep_time = min(chunk_size, remaining)
+                    time.sleep(sleep_time)
+                    remaining -= sleep_time
+                    
+                    # Show countdown for long waits
+                    if remaining > 0 and interval >= 300:
+                        mins_left = remaining // 60
+                        secs_left = remaining % 60
+                        self.logger.info(f"⏳ Next scan in: {mins_left}m {secs_left}s")
                 
             except Exception as e:
                 self.logger.error(f"Error in opportunity scanning: {e}")
@@ -511,11 +537,167 @@ class DualAccountTradingOrchestrator:
         self.logger.info("🛑 Stopping dual-account trading system...")
         self.is_running = False
 
+
+def get_available_accounts():
+    """Get list of available paper and live accounts"""
+    paper_accounts = []
+    live_accounts = []
+    
+    # Check for Alpaca paper credentials
+    if os.getenv('ALPACA_API_KEY'):
+        paper_accounts.append({
+            'id': 'alpaca_paper',
+            'name': 'Alpaca Paper Trading'
+        })
+    
+    # Check for TastyTrade paper credentials
+    if os.getenv('TASTYTRADE_PAPER_ACCOUNT_NUMBER') or os.getenv('TASTYTRADE_REFRESH_TOKEN'):
+        paper_accounts.append({
+            'id': 'tastytrade_paper',
+            'name': 'TastyTrade Paper (Sandbox)'
+        })
+    
+    # Check for TastyTrade live credentials
+    if os.getenv('TASTYTRADE_LIVE_ACCOUNT_NUMBER'):
+        live_accounts.append({
+            'id': 'tastytrade_live',
+            'name': 'TastyTrade Live'
+        })
+    
+    # Fallback if no accounts detected
+    if not paper_accounts:
+        paper_accounts = [{'id': 'paper', 'name': 'Paper Trading (Default)'}]
+    if not live_accounts:
+        live_accounts = [{'id': 'live', 'name': 'Live Trading (Default)'}]
+    
+    return paper_accounts, live_accounts
+
+def select_specific_accounts(account_list, account_type_name):
+    """Let user select specific accounts from a list"""
+    if len(account_list) == 1:
+        return [account_list[0]['id']]
+    
+    print(f"\n{account_type_name} Accounts Available:")
+    for i, acc in enumerate(account_list, 1):
+        print(f"{i}. {acc['name']}")
+    print(f"{len(account_list) + 1}. All {account_type_name} Accounts")
+    print(f"{len(account_list) + 2}. Cancel\n")
+    
+    while True:
+        try:
+            choice = input(f"Select {account_type_name} account (1-{len(account_list) + 2}): ").strip()
+            
+            if choice.isdigit():
+                choice_num = int(choice)
+                if 1 <= choice_num <= len(account_list):
+                    selected = account_list[choice_num - 1]
+                    print(f"✅ Selected: {selected['name']}")
+                    return [selected['id']]
+                elif choice_num == len(account_list) + 1:
+                    print(f"✅ Selected: All {account_type_name} Accounts")
+                    return [acc['id'] for acc in account_list]
+                elif choice_num == len(account_list) + 2:
+                    return None
+            
+            print(f"❌ Invalid choice. Please enter 1-{len(account_list) + 2}.\n")
+        except KeyboardInterrupt:
+            print("\n❌ Cancelled")
+            return None
+
+def prompt_account_selection():
+    """Interactive prompt for account selection at startup with multi-account support"""
+    print("\n" + "="*60)
+    print("🤖 DUAL-ACCOUNT AI TRADING SYSTEM")
+    print("="*60)
+    
+    # Get available accounts
+    paper_accounts, live_accounts = get_available_accounts()
+    
+    print("\nWhich account(s) would you like to activate?\n")
+    print("1. 📄 Paper Trading Only")
+    print("2. 💰 Live Trading Only")
+    print("3. 🔄 Both Paper & Live")
+    print("4. ❌ Cancel\n")
+    
+    while True:
+        try:
+            choice = input("Enter your choice (1-4): ").strip()
+            
+            if choice == "1":
+                # Paper trading only
+                selected = select_specific_accounts(paper_accounts, "Paper")
+                if selected:
+                    return selected
+                else:
+                    print("Returning to main menu...\n")
+                    continue
+                    
+            elif choice == "2":
+                # Live trading only
+                confirm = input("\n⚠️  WARNING: Live trading uses REAL MONEY. Continue? (yes/no): ").strip().lower()
+                if confirm not in ["yes", "y"]:
+                    print("❌ Cancelled. Returning to menu...\n")
+                    continue
+                
+                selected = select_specific_accounts(live_accounts, "Live")
+                if selected:
+                    return selected
+                else:
+                    print("Returning to main menu...\n")
+                    continue
+                    
+            elif choice == "3":
+                # Both paper and live
+                confirm = input("\n⚠️  WARNING: This includes LIVE TRADING with real money. Continue? (yes/no): ").strip().lower()
+                if confirm not in ["yes", "y"]:
+                    print("❌ Cancelled. Returning to menu...\n")
+                    continue
+                
+                # Select paper accounts
+                print("\n--- Step 1: Select Paper Account(s) ---")
+                paper_selected = select_specific_accounts(paper_accounts, "Paper")
+                if not paper_selected:
+                    print("Returning to main menu...\n")
+                    continue
+                
+                # Select live accounts
+                print("\n--- Step 2: Select Live Account(s) ---")
+                live_selected = select_specific_accounts(live_accounts, "Live")
+                if not live_selected:
+                    print("Returning to main menu...\n")
+                    continue
+                
+                return paper_selected + live_selected
+                
+            elif choice == "4":
+                print("\n❌ Exiting system...")
+                return None
+            else:
+                print("❌ Invalid choice. Please enter 1-4.\n")
+                
+        except KeyboardInterrupt:
+            print("\n\n❌ Cancelled by user")
+            return None
+
 def main():
     """Main entry point for dual-account system"""
     try:
+        # Interactive account selection
+        selected_accounts = prompt_account_selection()
+        
+        if selected_accounts is None:
+            print("\n👋 Goodbye!")
+            return
+        
+        print("\n" + "="*60)
+        print(f"🚀 Starting system with: {', '.join(selected_accounts).upper()}")
+        print("="*60 + "\n")
+        
         # Load configuration
         config = TradingConfig()
+        
+        # Store selected accounts in config (for orchestrator to use)
+        config.active_accounts = selected_accounts
         
         # Initialize orchestrator
         orchestrator = DualAccountTradingOrchestrator(config)

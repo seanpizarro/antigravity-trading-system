@@ -5,6 +5,10 @@ import logging
 from datetime import datetime
 from typing import Dict, List, Optional
 from dataclasses import dataclass
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 @dataclass
 class AccountInfo:
@@ -105,42 +109,71 @@ class DualTastyTradeAPI:
         from alpaca_api import AlpacaAPI
         
         if self.trading_mode in ['paper', 'both']:
-            # Check for Alpaca credentials first for paper trading
+            # Initialize Alpaca Paper if credentials available
             if os.getenv('ALPACA_API_KEY'):
-                self.logger.info("🦙 Found Alpaca credentials - Using Alpaca for Paper Trading")
-                paper_api = AlpacaAPI(paper=True)
-                # Alpaca doesn't have 'access_token' check in the same way, so we assume it's good if initialized
-                # But we should check if it connected successfully (it logs it)
-                
-                self.accounts['paper'] = AccountInfo(
-                    name="Alpaca Paper",
-                    account_number="ALPACA_PAPER",
-                    is_paper=True,
-                    api_instance=paper_api,
-                    balance=paper_api.get_account_balances().get('net_liquidating_value', 100000.0)
-                )
-                self.logger.info("✅ Alpaca Paper trading account initialized")
-            else:
-                # Fallback to TastyTrade Sandbox
-                self.logger.info("ℹ️ No Alpaca credentials - Using TastyTrade Sandbox for Paper Trading")
-                paper_api = TastyTradeAPI(sandbox=True)
-                if paper_api.access_token:
-                    paper_account_number = os.getenv('TASTYTRADE_PAPER_ACCOUNT_NUMBER')
-                    if not paper_account_number:
-                        self.logger.warning("⚠️ TASTYTRADE_PAPER_ACCOUNT_NUMBER not set. Using mock account.")
-                        paper_account_number = "MOCK_PAPER_ACCOUNT"
-                        
-                    self.accounts['paper'] = AccountInfo(
-                        name="TastyTrade Paper",
-                        account_number=paper_account_number,
+                self.logger.info("🦙 Found Alpaca credentials - Initializing Alpaca Paper Trading")
+                try:
+                    paper_api = AlpacaAPI(paper=True)
+                    
+                    self.accounts['alpaca_paper'] = AccountInfo(
+                        name="Alpaca Paper",
+                        account_number="ALPACA_PAPER",
                         is_paper=True,
                         api_instance=paper_api,
-                        balance=float(os.getenv('TASTYTRADE_PAPER_BALANCE', '100000.00'))
+                        balance=paper_api.get_account_balances().get('net_liquidating_value', 100000.0)
                     )
-                    self.logger.info("✅ TastyTrade Paper trading account initialized")
+                    self.logger.info("✅ Alpaca Paper trading account initialized")
+                except Exception as e:
+                    self.logger.error(f"❌ Failed to initialize Alpaca Paper: {e}")
+            
+            # Also initialize TastyTrade Sandbox if credentials available
+            if os.getenv('TASTYTRADE_PAPER_CLIENT_ID') or os.getenv('TASTYTRADE_PAPER_REFRESH_TOKEN'):
+                self.logger.info("📊 Found TastyTrade Paper credentials - Initializing TastyTrade Paper (Sandbox)")
+                try:
+                    paper_api = TastyTradeAPI(sandbox=True)
+                    if paper_api.access_token:
+                        paper_account_number = os.getenv('TASTYTRADE_PAPER_ACCOUNT_NUMBER', 'SANDBOX_ACCOUNT')
+                        
+                        # Try to get actual balance from API
+                        try:
+                            account_data = paper_api.get_account_data()
+                            balance = account_data.total_value if account_data else float(os.getenv('TASTYTRADE_PAPER_BALANCE', '100000.00'))
+                        except Exception as e:
+                            self.logger.warning(f"⚠️ Could not fetch TastyTrade Paper balance from API: {e}")
+                            balance = float(os.getenv('TASTYTRADE_PAPER_BALANCE', '100000.00'))
+                        
+                        self.accounts['tastytrade_paper'] = AccountInfo(
+                            name="TastyTrade Paper",
+                            account_number=paper_account_number,
+                            is_paper=True,
+                            api_instance=paper_api,
+                            balance=balance
+                        )
+                        self.logger.info("✅ TastyTrade Paper trading account initialized")
+                    else:
+                        self.logger.warning("⚠️ TastyTrade Paper authentication failed")
+                except Exception as e:
+                    self.logger.error(f"❌ Failed to initialize TastyTrade Paper: {e}")
         
         if self.trading_mode in ['live', 'both']:
-            # Initialize live account
+            # Initialize Alpaca Live if credentials available
+            if os.getenv('ALPACA_LIVE_API_KEY'):
+                self.logger.info("🦙 Found Alpaca Live credentials - Initializing Alpaca Live Trading")
+                try:
+                    live_alpaca_api = AlpacaAPI(paper=False)
+                    
+                    self.accounts['alpaca_live'] = AccountInfo(
+                        name="Alpaca Live",
+                        account_number="ALPACA_LIVE",
+                        is_paper=False,
+                        api_instance=live_alpaca_api,
+                        balance=live_alpaca_api.get_account_balances().get('net_liquidating_value', 0.0)
+                    )
+                    self.logger.info("✅ Alpaca Live trading account initialized")
+                except Exception as e:
+                    self.logger.error(f"❌ Failed to initialize Alpaca Live: {e}")
+            
+            # Initialize TastyTrade Live
             try:
                 live_api = TastyTradeAPI(sandbox=False)
                 if live_api.access_token and live_api.access_token != "sandbox_mock_token":
@@ -152,18 +185,18 @@ class DualTastyTradeAPI:
                          self.logger.error("❌ TASTYTRADE_LIVE_ACCOUNT_NUMBER not set in environment variables")
                          # Don't initialize live account if number is missing to prevent errors
                     else:
-                        self.accounts['live'] = AccountInfo(
-                            name="Live Trading",
+                        self.accounts['tastytrade_live'] = AccountInfo(
+                            name="TastyTrade Live",
                             account_number=live_account_number,
                             is_paper=False,
                             api_instance=live_api,
                             balance=account_data.total_value
                         )
-                        self.logger.info("✅ Live trading account initialized")
+                        self.logger.info("✅ TastyTrade Live trading account initialized")
                 else:
-                    self.logger.warning("⚠️ Live account authentication failed - skipping")
+                    self.logger.warning("⚠️ TastyTrade Live authentication failed - skipping")
             except Exception as e:
-                self.logger.warning(f"⚠️ Could not initialize live account: {e}")
+                self.logger.warning(f"⚠️ Could not initialize TastyTrade Live account: {e}")
         
         if not self.accounts:
             self.logger.error("❌ No accounts could be initialized")
@@ -252,13 +285,28 @@ class DualTastyTradeAPI:
         """Get current balances for all accounts"""
         balances = {}
         for account_type, account in self.accounts.items():
-            # For paper, use our tracked balance; for live, fetch from API
-            if account.is_paper:
-                balances[account_type] = account.balance
+            # For Alpaca accounts (both paper and live), use get_account_balances method
+            if account.account_number in ["ALPACA_PAPER", "ALPACA_LIVE"]:
+                try:
+                    alpaca_balances = account.api_instance.get_account_balances()
+                    balance = alpaca_balances.get('net_liquidating_value', account.balance)
+                    balances[account_type] = balance
+                    account.balance = balance  # Update cached balance
+                except Exception as e:
+                    self.logger.error(f"Error fetching Alpaca balance for {account_type}: {e}")
+                    balances[account_type] = account.balance  # Fallback to cached
             else:
-                account_data = account.api_instance.get_account_data()
-                balances[account_type] = account_data.total_value
-                account.balance = account_data.total_value  # Update cached balance
+                # TastyTrade accounts - fetch from API
+                try:
+                    account_data = account.api_instance.get_account_data()
+                    if account_data:
+                        balances[account_type] = account_data.total_value
+                        account.balance = account_data.total_value  # Update cached balance
+                    else:
+                        balances[account_type] = account.balance  # Fallback to cached
+                except Exception as e:
+                    self.logger.error(f"Error fetching balance for {account_type}: {e}")
+                    balances[account_type] = account.balance  # Fallback to cached
         
         return balances
     
@@ -268,15 +316,21 @@ class DualTastyTradeAPI:
             account = self.get_account(account_type)
             if not account:
                 return {}
-            # Return local positions for paper account
-            if account.is_paper:
+            # For Alpaca accounts (paper/live), fetch from API
+            if account.account_number in ["ALPACA_PAPER", "ALPACA_LIVE"]:
+                return account.api_instance.get_positions()
+            elif account.is_paper:
+                # TastyTrade paper - use local storage
                 return self.paper_positions
+            # TastyTrade live - fetch from API
             return account.api_instance.get_positions()
         else:
             # Return positions from all accounts
             all_positions = {}
             for acc_type, account in self.accounts.items():
-                if account.is_paper:
+                if account.account_number in ["ALPACA_PAPER", "ALPACA_LIVE"]:
+                    all_positions[acc_type] = account.api_instance.get_positions()
+                elif account.is_paper:
                     all_positions[acc_type] = self.paper_positions
                 else:
                     all_positions[acc_type] = account.api_instance.get_positions()
